@@ -1,13 +1,13 @@
-// TODO: Use the correct access modifiers for struct fields
-// TODO: Chage default char
-use crate::renderer::Renderer;
+// use crate::renderer::Renderer;
+use std::fs::{File, write, read};
+use std::io::Write;
 use std::path::PathBuf;
 
 const INIT_LEN: usize = 10;
 const CURSOR_STR: char = '|';
 const GAP_STR: char = '_';
 const RENDER_NEW_LINES: bool = true;
-const DEFAULT_CHAR: char = '_';
+pub const DEFAULT_CHAR: char = '\0';
 
 pub type Position = (usize, usize);
 
@@ -15,13 +15,12 @@ pub type Text = Box<[char]>;
 
 #[derive(Debug)]
 pub struct Buffer {
-    path: Option<PathBuf>,
-    modified: bool, // TODO: Figure out if this is even needed
-    pub data: Box<[char]>, // TODO: Remove pub
-    data_len: usize,
-    pub gap_start: usize, // TODO: Remove pub
-    pub gap_len: usize, // TODO: Remove pub
-    pub cursor_offset: usize, // TODO: Remove pub
+    pub path: Option<PathBuf>,
+    pub data: Box<[char]>,
+    pub data_len: usize,
+    pub gap_start: usize,
+    pub gap_len: usize,
+    pub cursor_offset: usize,
     pub line_offsets: Vec<usize>,
 }
 
@@ -30,31 +29,52 @@ impl Buffer {
 
     pub fn new(path: Option<PathBuf>) -> Self {
         let data: Box<[char]>;
+        let mut gap_len = INIT_LEN;
+        let mut data_len = INIT_LEN;
 
-        match path {
-            Some(path) => {
-                todo!("New gap buffer from file path not implemented");
+        match &path {
+            Some(file_path) => {
+                if let Ok(bytes) = read(file_path){
+                    let tmp: Vec<char> = bytes.iter().map(|&byte| byte as char).collect();
+                    data = tmp.into_boxed_slice();
+                    gap_len = 0;
+                    data_len = data.len();
+                } else {
+                    todo!("error handling for invalid files");
+                    // TODO: Figure out error handling
+                }
             }
             None => {
                 data = vec![DEFAULT_CHAR; INIT_LEN].into_boxed_slice();
             }
         }
 
-        Buffer {
+        let mut buffer = Buffer {
             path,
-            modified: false,
             data,
-            data_len: INIT_LEN,
+            data_len,
             gap_start: 0,
-            gap_len: INIT_LEN,
+            gap_len,
             cursor_offset: 0,
             line_offsets: vec![],
-        }
+        };
+        buffer.update_line_offsets();
+        buffer
     }
 
-    pub fn save(&mut self) {
-        self.modified = false;
-        todo!("save not implemented");
+    pub fn save(&self, path: Option<PathBuf>) {
+        match path {
+            Some(file_path) => {
+                // TODO: Remove unwraps and actually handle the errors
+                let mut f = File::create(file_path).unwrap();
+                let data = self.text().iter().collect::<String>();
+                f.write_all(data.as_bytes()).expect("Unable to write data");
+            },
+            None => {
+                self.save(self.path.clone());
+                // TODO: Handle no path connected to buffer
+            }
+        }
     }
 
     pub fn insert_char(&mut self, c: char) {
@@ -67,52 +87,70 @@ impl Buffer {
 
         self.data[self.gap_start] = c;
         self.gap_start += 1;
-        self.gap_len -= 1;
         self.cursor_offset += 1;
-        self.modified = true;
+        self.gap_len -= 1;
         self.update_line_offsets();
     }
 
     pub fn move_cursor(&mut self, offset: i32) {
-        let mut new_cursor_pos: i32 = self.cursor_offset as i32 + offset;
+        let mut new_cursor_offset: i32 = self.cursor_offset as i32 + offset;
 
-        if new_cursor_pos < 0 {
-            new_cursor_pos = 0;
-        } else if new_cursor_pos > self.data_len as i32 {
-            new_cursor_pos = self.data_len as i32;
-        } else if self.gap_len != 0 {
-            if new_cursor_pos == (self.gap_start + self.gap_len) as i32 {
-                assert_ne!(offset, 0, "Cursor got in that ugly spot");
-                new_cursor_pos = self.gap_start as i32;
-            } else if new_cursor_pos == (self.gap_start + 1) as i32 {
-                assert_ne!(offset, 0, "Cursor got into the gap");
-                if (self.gap_start + self.gap_len) != self.data_len {
-                    new_cursor_pos = (self.gap_start + self.gap_len + 1) as i32;
-                } else {
-                    new_cursor_pos = self.cursor_offset as i32;
-                }
-            }
+        // Only the cases where the cursor offset changes sides relative to the gap start should be handled
+
+        // From before the gap to after the gap
+        if self.cursor_offset <= self.gap_start && (self.gap_start as i32) < new_cursor_offset {
+            new_cursor_offset += self.gap_len as i32;
         }
 
-        self.cursor_offset = new_cursor_pos as usize;
+        // From after the gap to before the gap
+        if new_cursor_offset <= (self.gap_start as i32) && self.gap_start < self.cursor_offset {
+            new_cursor_offset -= self.gap_len as i32;
+        }
+
+        // Boundary cases
+        if new_cursor_offset < 0 {
+            new_cursor_offset = 0;
+        }
+        if new_cursor_offset > (self.data_len as i32) {
+            new_cursor_offset = self.data_len as i32;
+        }
+
+        // Cursor goes into the gap from the left
+        // HACK: Not sure if `&& self.gap_len != 1` works
+        if new_cursor_offset == (self.gap_start + 1) as i32 && self.gap_len != 1 {
+            new_cursor_offset += self.gap_len as i32;
+        }
+        // Cursor goes into the gap from the right
+        if new_cursor_offset == (self.gap_start + self.gap_len) as i32 {
+            new_cursor_offset = self.gap_start as i32;
+        }
+
+        self.cursor_offset = new_cursor_offset as usize;
+        assert!(self.cursor_offset > (self.gap_start + self.gap_len) || self.cursor_offset <= self.gap_start, "Cursor is in the gap");
+    }
+
+    pub fn go_to_line(&self, dest_line: usize) {
+        todo!("go_to_line");
+    }
+
+    pub fn go_to_column(&self, column: usize) {
+        todo!("go_to_column");
     }
 
     pub fn move_to_eol(&mut self) {
-        self.align_gap();
-
-        let (line, column) = self.cursor_position();
-        let mut offset = self.data_len - self.cursor_offset - self.gap_len;
-
-        if self.line_offsets.len() != 0 {
-            // offset = (self.line_offsets[line - 1] - self.cursor_offset);
-            // offset = 0;
-        }
-
-        self.move_cursor(offset as i32);
+        todo!("move_to_eol");
     }
 
     pub fn move_to_bol(&mut self) {
         todo!("move_to_bol");
+    }
+
+    pub fn kill_to_eol(&mut self) {
+        todo!("kill_to_eol");
+    }
+
+    pub fn kill_to_bol(&mut self) {
+        todo!("kill_to_bol");
     }
 
     pub fn delete_char_forward(&mut self) {
@@ -120,6 +158,7 @@ impl Buffer {
 
         self.align_gap();
         self.gap_len += 1;
+        self.update_line_offsets();
     }
 
     pub fn delete_char_backward(&mut self) {
@@ -129,6 +168,7 @@ impl Buffer {
         self.move_cursor(-1);
         self.gap_start -= 1;
         self.gap_len += 1;
+        self.update_line_offsets();
     }
 
     pub fn line_count(&self) -> usize {
@@ -136,24 +176,65 @@ impl Buffer {
     }
 
     pub fn cursor_position(&self) -> Position {
-        let mut line_number: usize = 0;
+        let mut line: usize = 0;
 
-        while line_number < self.line_count() - 1
-            && self.cursor_offset > self.line_offsets[line_number]
+        while line < self.line_count() - 1
+        && self.cursor_offset > self.line_offsets[line]
         {
-            line_number += 1;
+            line += 1;
         }
 
-        // let column_number: usize = self.cursor_offset - self.line_offsets[(line_number - 1).max(0)].min;
-        let mut column_number: usize = self.cursor_offset;
-        if line_number > 0 {
-            column_number -= self.line_offsets[line_number - 1];
+        let mut column: usize = self.cursor_offset;
+
+        if line > 0 {
+            column -= self.line_offsets[line - 1] + 1;
         }
 
-        if column_number > self.gap_start {
-            column_number -= self.gap_start;
+        // Cursor is in front of gap and gap is on the same line
+        if line == 0 {
+            if column > self.gap_start {
+                column -= self.gap_len;
+            }
+        } else {
+            let line_offset = self.line_offsets[line - 1];
+            if line_offset < self.gap_start && self.gap_start < self.cursor_offset {
+                column -= self.gap_len;
+            }
         }
-        (line_number + 1, column_number)
+
+        (line + 1, column + 1)
+    }
+
+    pub fn cursor_offset(&self) -> usize {
+        let mut x: usize = self.cursor_offset;
+        if x > self.gap_start {
+            x -= self.gap_len;
+        }
+        x
+    }
+
+    pub fn text(&self) -> Text {
+        let expected_len: usize = self.data_len - self.gap_len;
+        let mut text: Box<[char]> = vec![DEFAULT_CHAR; expected_len].into_boxed_slice();
+
+        let mut i: usize = 0;
+        let mut j: usize = 0;
+        while i < expected_len {
+            assert!(
+                i < text.len(),
+                "Iterator variable greater than expected text size"
+            );
+
+            if self.gap_start <= j && j < self.gap_start + self.gap_len {
+                j += 1;
+                continue;
+            }
+
+            text[i] = self.data[j];
+            i += 1;
+            j += 1;
+        }
+        text
     }
 
     // Private interface
@@ -226,110 +307,18 @@ impl Buffer {
         )
     }
 
+    fn line_at_offset(&self, offset: i32) {
+    }
+
     fn update_line_offsets(&mut self) {
-        let prev_line_count: usize = self.line_offsets.len();
-        let mut line_number: usize = 0;
+        self.line_offsets = vec![];
 
         for i in 0..self.data_len {
             if self.data[i] == '\n' {
-                if line_number < prev_line_count {
-                    self.line_offsets[line_number] = i;
-                } else {
+                if i < self.gap_start || i >= self.gap_start + self.gap_len {
                     self.line_offsets.push(i);
                 }
-                line_number += 1;
-            }
-        }
-
-        if line_number < prev_line_count {
-            for _ in 0..prev_line_count - line_number - 1 {
-                self.line_offsets.pop();
             }
         }
     }
-
-    // TODO: Only for debugging, delete when not needed
-    pub fn print_debug(&self) {
-        for i in 0..self.data_len {
-            if i == self.cursor_offset {
-                print!("{}", CURSOR_STR);
-                continue;
-            }
-            if self.gap_start <= i && i < self.gap_start + self.gap_len {
-                print!("{}", GAP_STR);
-                continue;
-            }
-            if self.data[i] == '\n' && !RENDER_NEW_LINES {
-                print!("\\n");
-                continue;
-            }
-            print!("{}", self.data[i]);
-        }
-        println!(
-            "\ndata_len: {}, cursor_pos: {}, gap_start: {}, gap_len: {}\n",
-            self.data_len, self.cursor_offset, self.gap_start, self.gap_len
-        );
-    }
-}
-
-pub struct View {
-    pub buffer: Buffer,
-    pub surface: Surface,
-    pub line_wrapping: bool,
-}
-
-pub struct Surface {
-    x: usize,
-    y: usize,
-    width: usize,
-    height: usize,
-}
-
-impl View {
-    pub fn new(buffer: Buffer, x: usize, y: usize, width: usize, height: usize) -> Self {
-        let surface = Surface { x, y, width, height };
-        let mut view = View {
-            buffer,
-            surface,
-            line_wrapping: true,
-        };
-        view
-    }
-
-    pub fn text(&self) -> Text {
-        let expected_len: usize = self.buffer.data_len - self.buffer.gap_len;
-        let mut text: Box<[char]> = vec![DEFAULT_CHAR; expected_len].into_boxed_slice();
-
-        let mut i: usize = 0;
-        let mut j: usize = 0;
-        while i < expected_len {
-            assert!(
-                i < text.len(),
-                "Iterator variable greater than expected text size"
-            );
-
-            if self.buffer.gap_start <= j && j < self.buffer.gap_start + self.buffer.gap_len {
-                j += 1;
-                continue;
-            }
-
-            text[i] = self.buffer.data[j];
-            i += 1;
-            j += 1;
-        }
-        text
-    }
-
-    pub fn cursor_offset(&self) -> usize {
-        let mut x: usize = self.buffer.cursor_offset;
-        if x > self.buffer.gap_start {
-            x -= self.buffer.gap_len;
-        }
-        x
-    }
-}
-
-pub struct Editor {
-    buffers: Vec<Buffer>,
-    views: Vec<View>,
 }
