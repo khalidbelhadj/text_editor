@@ -57,13 +57,13 @@ impl Buffer {
         buffer
     }
 
-    pub fn get_path_as_string(&self) -> String {
+    pub fn get_path_as_string(&self) -> &str {
         match &self.path {
             Some(p) => {
-                p.to_str().unwrap().to_string()
+                p.to_str().unwrap()
             },
             None => {
-                "".to_string()
+                ""
             }
         }
     }

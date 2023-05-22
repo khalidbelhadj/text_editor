@@ -102,18 +102,20 @@ impl Editor {
                     'w' => {
                         self.save_buffer();
                     },
-                    'p' => {
-                        res = Err(EditorError::ToggleDebug);
-                    },
+                    // 'p' => {
+                    //     res = Err(EditorError::ToggleDebug);
+                    // },
                     'y' => {
                         self.buffers.remove(&view.buffer_id);
                         self.buffers.insert(view.buffer_id, Buffer::new(None));
                     }
-                    _ => todo!("Ctrl modifier not implemented")
+                    _ => {
+                        // todo!("Ctrl modifier not implemented")
+                    }
                 }
             },
             _ => {
-                todo!("key not handled key: {:?}", key);
+                // todo!("key not handled key: {:?}", key);
             }
         }
         return res;

@@ -14,11 +14,7 @@ use view::View;
 
 use termion::{event::Key, raw::RawTerminal};
 use termion::input::TermRead;
-use termion::raw::IntoRawMode;
-
-use std::io::{Write, stdout, stdin, Stdout};
-
-use termion::{color, clear, style, cursor};
+use std::io::stdin;
 use crate::editor::{Editor, EditorError};
 use crate::renderer::{TerminalRenderer, Renderer};
 
@@ -43,7 +39,6 @@ fn main() {
         }
     }
 
-    let mut stdout = stdout().into_raw_mode().unwrap();
     // let stdin = termion::async_stdin();
     let stdin = stdin();
 
@@ -51,9 +46,7 @@ fn main() {
     let mut renderer = TerminalRenderer::new();
     editor.open_file(path);
 
-    write!(stdout, "{}", clear::All).unwrap();
     renderer.render(&editor);
-    stdout.flush().unwrap();
     let mut it = stdin.keys();
 
     loop {
@@ -77,6 +70,4 @@ fn main() {
         } else {
         }
     }
-    write!(stdout, "{}", termion::clear::All).unwrap();
-    stdout.flush().unwrap();
 }

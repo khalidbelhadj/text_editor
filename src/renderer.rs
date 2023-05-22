@@ -7,6 +7,7 @@ use termion::{
 };
 
 use std::io::{Write, stdout, Stdout};
+use termion::screen::{AlternateScreen, IntoAlternateScreen};
 
 use crate::editor::Editor;
 
@@ -16,14 +17,14 @@ pub trait Renderer {
 }
 
 pub struct TerminalRenderer {
-    stdout: RawTerminal<Stdout>,
+    stdout: AlternateScreen<RawTerminal<Stdout>>,
     pub debug: bool
 }
 
 impl Renderer for TerminalRenderer {
     fn new() -> Self {
         TerminalRenderer {
-            stdout: stdout().into_raw_mode().unwrap(),
+            stdout: stdout().into_raw_mode().unwrap().into_alternate_screen().unwrap(),
             debug: false,
         }
     }
@@ -47,9 +48,10 @@ impl Renderer for TerminalRenderer {
 
         let mut line_number: u16 = 1;
         let mut line_offset = 0;
+        let gutter_offset = buffer.line_count().to_string().len() + 1;
 
         write!(self.stdout, "{}", cursor::Hide).unwrap();
-        write!(self.stdout, "{}{}", cursor::Goto(1, line_number), clear::CurrentLine).unwrap();
+        // write!(self.stdout, "{}{}", cursor::Goto(1, line_number), clear::CurrentLine).unwrap();
         for i in 0..text.len() {
             if line_number > height {
                 break;
@@ -57,24 +59,29 @@ impl Renderer for TerminalRenderer {
 
             if self.debug && show_gap {
                 if buffer.gap_start <= i && i < buffer.gap_start + buffer.gap_len {
-                    write!(self.stdout, "{}{}", cursor::Goto((i - line_offset + 1) as u16, line_number), '_').unwrap();
+                    write!(self.stdout, "{}{}", cursor::Goto((i - line_offset + 1 + gutter_offset) as u16, line_number), '_').unwrap();
+                    self.stdout.flush().unwrap();
                     continue;
                 }
             }
 
             if text[i] == '\n' {
+                // Clear everything that was not overwritten in the current line render
+                write!(self.stdout, "{}{}", cursor::Goto((i - line_offset + 1 + gutter_offset) as u16, line_number), clear::UntilNewline).unwrap();
+                write!(self.stdout, "{}{}{}", color::Fg(color::Rgb(150, 150, 150)), cursor::Goto(1, line_number), line_number).unwrap();
+                write!(self.stdout, "{}", color::Fg(color::Reset)).unwrap();
+                self.stdout.flush().unwrap();
                 line_number += 1;
-                write!(self.stdout, "{}{}", cursor::Goto(1, line_number), clear::UntilNewline).unwrap();
                 line_offset = i + 1;
                 continue;
             }
 
-            write!(self.stdout, "{}{}", cursor::Goto((i - line_offset + 1) as u16, line_number), text[i]).unwrap();
+            write!(self.stdout, "{}{}", cursor::Goto((i - line_offset + 1 + gutter_offset) as u16, line_number), text[i]).unwrap();
             self.stdout.flush().unwrap();
 
-            use std::{thread, time};
-            let ten_millis = time::Duration::from_millis(20);
-            thread::sleep(ten_millis);
+            // use std::{thread, time};
+            // let ten_millis = time::Duration::from_millis(100);
+            // thread::sleep(ten_millis);
         }
 
         if self.debug {
@@ -97,11 +104,11 @@ impl Renderer for TerminalRenderer {
         // Drawing the status line
         write!(self.stdout, "{}", cursor::Goto(1 as u16, height as u16)).unwrap();
         write!(self.stdout, "{}", clear::CurrentLine).unwrap();
-
-        write!(self.stdout, "{}{}COL: {} LINE: {} FILE: {:?}", color::Fg(color::Black), color::Bg(color::White), column, line, buffer.get_path_as_string()).unwrap();
+        write!(self.stdout, "{}{} {} | ({}, {}) ", color::Fg(color::Black), color::Bg(color::White), buffer.get_path_as_string(), column, line).unwrap();
         write!(self.stdout, "{}{}", color::Bg(color::Reset), color::Fg(color::Reset)).unwrap();
 
-        write!(self.stdout, "{}", cursor::Goto(column as u16, line as u16)).unwrap();
+        // Repositioning the cursor
+        write!(self.stdout, "{}", cursor::Goto((column + gutter_offset) as u16, line as u16)).unwrap();
         write!(self.stdout, "{}", cursor::Show).unwrap();
         write!(self.stdout, "{}", cursor::BlinkingBlock).unwrap();
 
