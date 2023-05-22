@@ -5,11 +5,10 @@ use std::str::FromStr;
 mod buffer;
 use buffer::Buffer;
 
-// mod renderer;
-// use renderer::{NCursesRenderer, Renderer};
 
 mod view;
 mod editor;
+mod renderer;
 
 use view::View;
 
@@ -21,6 +20,7 @@ use std::io::{Write, stdout, stdin, Stdout};
 
 use termion::{color, clear, style, cursor};
 use crate::editor::{Editor, EditorError};
+use crate::renderer::{TerminalRenderer, Renderer};
 
 
 fn main() {
@@ -43,15 +43,16 @@ fn main() {
         }
     }
 
-    let mut editor = Editor::new(path);
-
     let mut stdout = stdout().into_raw_mode().unwrap();
     // let stdin = termion::async_stdin();
     let stdin = stdin();
 
-    write!(stdout, "{}{}{}", termion::clear::All, termion::cursor::Goto(1, 1), termion::cursor::BlinkingBlock).unwrap();
+    let mut editor = Editor::new();
+    let mut renderer = TerminalRenderer::new();
+    editor.open_file(path);
 
-    editor.render(&mut stdout, debug);
+    write!(stdout, "{}", clear::All).unwrap();
+    renderer.render(&editor);
     stdout.flush().unwrap();
     let mut it = stdin.keys();
 
@@ -64,6 +65,7 @@ fn main() {
                             break;
                         },
                         EditorError::ToggleDebug => {
+                            renderer.debug = !renderer.debug;
                             debug = !debug;
                         },
                     }
@@ -71,11 +73,10 @@ fn main() {
             } else {
                 panic!("Not sure what happened but stdin was invalid for some reason");
             }
-            editor.render(&mut stdout, debug);
-            stdout.flush().unwrap();
+            renderer.render(&editor);
         } else {
         }
     }
-    // write!(stdout, "{}", termion::clear::All).unwrap();
-    // stdout.flush().unwrap();
+    write!(stdout, "{}", termion::clear::All).unwrap();
+    stdout.flush().unwrap();
 }

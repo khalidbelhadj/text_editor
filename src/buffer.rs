@@ -1,16 +1,11 @@
-// use crate::renderer::Renderer;
-use std::fs::{File, write, read};
-use std::io::Write;
+use std::fs::read;
+
 use std::path::PathBuf;
 
-const INIT_LEN: usize = 10;
-const CURSOR_STR: char = '|';
-const GAP_STR: char = '_';
-const RENDER_NEW_LINES: bool = true;
-pub const DEFAULT_CHAR: char = '\0';
+const INIT_LEN: usize = 20;
+const DEFAULT_CHAR: char = '\0';
 
 pub type Position = (usize, usize);
-
 pub type Text = Box<[char]>;
 
 #[derive(Debug)]
@@ -40,8 +35,8 @@ impl Buffer {
                     gap_len = 0;
                     data_len = data.len();
                 } else {
-                    todo!("error handling for invalid files");
                     // TODO: Figure out error handling
+                    todo!("error handling for invalid files");
                 }
             }
             None => {
@@ -62,17 +57,13 @@ impl Buffer {
         buffer
     }
 
-    pub fn save(&self, path: Option<PathBuf>) {
-        match path {
-            Some(file_path) => {
-                // TODO: Remove unwraps and actually handle the errors
-                let mut f = File::create(file_path).unwrap();
-                let data = self.text().iter().collect::<String>();
-                f.write_all(data.as_bytes()).expect("Unable to write data");
+    pub fn get_path_as_string(&self) -> String {
+        match &self.path {
+            Some(p) => {
+                p.to_str().unwrap().to_string()
             },
             None => {
-                self.save(self.path.clone());
-                // TODO: Handle no path connected to buffer
+                "".to_string()
             }
         }
     }
@@ -205,14 +196,6 @@ impl Buffer {
         (line + 1, column + 1)
     }
 
-    pub fn cursor_offset(&self) -> usize {
-        let mut x: usize = self.cursor_offset;
-        if x > self.gap_start {
-            x -= self.gap_len;
-        }
-        x
-    }
-
     pub fn text(&self) -> Text {
         let expected_len: usize = self.data_len - self.gap_len;
         let mut text: Box<[char]> = vec![DEFAULT_CHAR; expected_len].into_boxed_slice();
@@ -305,9 +288,6 @@ impl Buffer {
             self.gap_start..(self.gap_start + right_chars_count),
             self.gap_start + self.gap_len,
         )
-    }
-
-    fn line_at_offset(&self, offset: i32) {
     }
 
     fn update_line_offsets(&mut self) {
