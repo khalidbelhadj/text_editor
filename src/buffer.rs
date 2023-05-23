@@ -8,6 +8,20 @@ const DEFAULT_CHAR: char = '\0';
 pub type Position = (usize, usize);
 pub type Text = Box<[char]>;
 
+pub enum TextObject {
+    Char,
+    Word,
+    Line,
+    Paragraph,
+}
+
+pub enum Direction {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
 #[derive(Debug)]
 pub struct Buffer {
     pub path: Option<PathBuf>,
@@ -17,6 +31,7 @@ pub struct Buffer {
     pub gap_len: usize,
     pub cursor_offset: usize,
     pub line_offsets: Vec<usize>,
+    pub modified: bool,
 }
 
 impl Buffer {
@@ -29,7 +44,7 @@ impl Buffer {
 
         match &path {
             Some(file_path) => {
-                if let Ok(bytes) = read(file_path){
+                if let Ok(bytes) = read(file_path) {
                     let tmp: Vec<char> = bytes.iter().map(|&byte| byte as char).collect();
                     data = tmp.into_boxed_slice();
                     gap_len = 0;
@@ -52,6 +67,7 @@ impl Buffer {
             gap_len,
             cursor_offset: 0,
             line_offsets: vec![],
+            modified: false,
         };
         buffer.update_line_offsets();
         buffer
@@ -59,13 +75,111 @@ impl Buffer {
 
     pub fn get_path_as_string(&self) -> &str {
         match &self.path {
-            Some(p) => {
-                p.to_str().unwrap()
-            },
-            None => {
-                ""
+            Some(p) => p.to_str().unwrap(),
+            None => "",
+        }
+    }
+
+    fn get_object_offset(&self, object: TextObject, direction: Direction) -> i32 {
+        let mut offset = self.cursor_offset as i32;
+        let text = &self.text();
+        let mut cursor_offset: usize = self.cursor_offset;
+        if cursor_offset > self.gap_start {
+            cursor_offset -= self.gap_len;
+        }
+
+        match object {
+            TextObject::Char => match direction {
+                Direction::Left => {
+                    offset = -1;
+                }
+                Direction::Right => {
+                    offset = 1;
+                }
+                _ => {}
+            }
+            TextObject::Word => {
+                let word_boundaries: Vec<char> = vec![' ', '-', '_'];
+                match direction {
+                    Direction::Left => {
+                        offset = -1;
+                        while cursor_offset as i32 + offset >= 0
+                            && !word_boundaries
+                                .contains(&text[(cursor_offset as i32 + offset) as usize])
+                        {
+                            offset -= 1;
+                        }
+                    }
+                    Direction::Right => {
+                        offset = 1;
+                        while cursor_offset as i32 + offset < text.len() as i32
+                            && !word_boundaries
+                                .contains(&text[(cursor_offset as i32 + offset) as usize])
+                        {
+                            offset += 1;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            TextObject::Line => match direction {
+                Direction::Up => {}
+                Direction::Down => {}
+                Direction::Left => {
+                    let (line, _) = self.cursor_position();
+
+                    if line == 1 {
+                        offset = - (cursor_offset as i32);
+                    } else if line <= self.line_offsets.len() {
+                        offset = - (self.line_offsets[line - 1] as i32);
+                    }
+                }
+                Direction::Right => {
+                    let (line, _) = self.cursor_position();
+
+                    if line == self.line_count() {
+                        offset = text.len() as i32;
+                    } else if line < self.line_offsets.len() {
+                        offset = self.line_offsets[line] as i32;
+                    }
+                }
+            }
+            TextObject::Paragraph => match direction {
+                Direction::Up => {}
+                Direction::Down => {}
+                Direction::Left => {}
+                Direction::Right => {}
             }
         }
+        offset
+    }
+
+    pub fn go(&mut self, object: TextObject, direction: Direction) {
+        let target = self.get_object_offset(object, direction);
+        self.move_cursor(target);
+    }
+
+    pub fn delete(&mut self, object: TextObject, direction: Direction) {
+        let mut target = self.get_object_offset(object, direction);
+        
+        if target == 0 {
+            return;
+        }
+
+        while target != 0 {
+            if target < 0 {
+                self.delete_char_backward();
+                target += 1;
+            } else if target > 0 {
+                self.delete_char_forward();
+                target -= 1;
+            }
+        }
+    }
+
+    pub fn select(&mut self, object: TextObject, direction: Direction) {
+        todo!("selection");
+        let target = self.get_object_offset(object, direction);
     }
 
     pub fn insert_char(&mut self, c: char) {
@@ -81,6 +195,7 @@ impl Buffer {
         self.cursor_offset += 1;
         self.gap_len -= 1;
         self.update_line_offsets();
+        self.modified = true
     }
 
     pub fn move_cursor(&mut self, offset: i32) {
@@ -116,8 +231,12 @@ impl Buffer {
             new_cursor_offset = self.gap_start as i32;
         }
 
+        assert!(
+            self.cursor_offset > (self.gap_start + self.gap_len)
+                || self.cursor_offset <= self.gap_start,
+            "Cursor is in the gap"
+        );
         self.cursor_offset = new_cursor_offset as usize;
-        assert!(self.cursor_offset > (self.gap_start + self.gap_len) || self.cursor_offset <= self.gap_start, "Cursor is in the gap");
     }
 
     pub fn go_to_line(&self, dest_line: usize) {
@@ -145,21 +264,27 @@ impl Buffer {
     }
 
     pub fn delete_char_forward(&mut self) {
-        if self.cursor_offset == self.data_len - self.gap_len {return};
+        if self.cursor_offset == self.data_len - self.gap_len {
+            return;
+        };
 
         self.align_gap();
         self.gap_len += 1;
         self.update_line_offsets();
+        self.modified = true
     }
 
     pub fn delete_char_backward(&mut self) {
-        if self.cursor_offset == 0 {return};
+        if self.cursor_offset == 0 {
+            return;
+        };
 
         self.align_gap();
         self.move_cursor(-1);
         self.gap_start -= 1;
         self.gap_len += 1;
         self.update_line_offsets();
+        self.modified = true
     }
 
     pub fn line_count(&self) -> usize {
@@ -169,9 +294,7 @@ impl Buffer {
     pub fn cursor_position(&self) -> Position {
         let mut line: usize = 0;
 
-        while line < self.line_count() - 1
-        && self.cursor_offset > self.line_offsets[line]
-        {
+        while line < self.line_count() - 1 && self.cursor_offset > self.line_offsets[line] {
             line += 1;
         }
 

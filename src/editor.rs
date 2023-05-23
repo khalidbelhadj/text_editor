@@ -1,6 +1,7 @@
 use std::collections::HashMap;
-use crate::buffer::Buffer;
+use crate::buffer::{Buffer, TextObject, Direction};
 use crate::view::View;
+use crate::controller::{EditorCommand, ControlCommand, RedrawItem};
 
 use termion::event::Key;
 
@@ -52,7 +53,8 @@ impl Editor {
                 let mut f = File::create(file_path).unwrap();
                 let data = buffer.text().iter().collect::<String>();
                 f.write_all(data.as_bytes()).expect("Unable to write data");
-            },
+                buffer.modified = false
+            }
             None => {
                 todo!("handling saving with no path");
             }
@@ -61,69 +63,77 @@ impl Editor {
 
     // TODO: Not sure if I should be using a Result for this
     // TODO: At least use proper generics inside the Result
-    pub fn handle_key(&mut self, key: Key) -> Result<(), EditorError> {
+    pub fn handle_key(&mut self, key: Key) -> ControlCommand {
         let view = self.views.get(&self.focused).unwrap(); // TODO: Change unwrap
         let buffer = self.buffers.get_mut(&view.buffer_id).unwrap();
 
-        let mut res: Result<(), EditorError> = Ok(());
         match key {
             Key::Char(c) => {
                 buffer.insert_char(c);
-            },
+                return ControlCommand::Redraw(RedrawItem::FocusedView);
+            }
             Key::Left => {
-                buffer.move_cursor(-1);
-            },
+                buffer.go(TextObject::Char, Direction::Left);
+                return ControlCommand::Redraw(RedrawItem::Cursor);
+            }
             Key::Right => {
-                buffer.move_cursor(1);
-            },
+                buffer.go(TextObject::Char, Direction::Right);
+                return ControlCommand::Redraw(RedrawItem::Cursor);
+            }
             Key::Backspace => {
-                buffer.delete_char_backward();
-            },
+                buffer.delete(TextObject::Char, Direction::Left);
+                return ControlCommand::Redraw(RedrawItem::FocusedView);
+            }
             Key::Ctrl(c) => {
                 match c {
                     'c' => {
-                        res = Err(EditorError::Quit);
-                    },
+                        return ControlCommand::Editor(EditorCommand::Quit)
+                    }
                     'd' => {
-                        buffer.delete_char_forward();
-                    },
+                        buffer.delete(TextObject::Char, Direction::Right);
+                        return ControlCommand::Redraw(RedrawItem::FocusedView);
+                    }
                     'b' => {
-                        buffer.move_cursor(-1);
-                    },
+                        buffer.go(TextObject::Char, Direction::Left);
+                        return ControlCommand::Redraw(RedrawItem::Cursor);
+                    }
                     'f' => {
-                        buffer.move_cursor(1);
-                    },
+                        buffer.go(TextObject::Char, Direction::Right);
+                        return ControlCommand::Redraw(RedrawItem::Cursor);
+                    }
                     'e' => {
-                        buffer.move_to_eol();
-                    },
+                        buffer.go(TextObject::Line, Direction::Right);
+                        return ControlCommand::Redraw(RedrawItem::Cursor);
+                    }
                     'a' => {
-                        buffer.move_to_bol();
-                    },
+                        buffer.go(TextObject::Line, Direction::Left);
+                        return ControlCommand::Redraw(RedrawItem::Cursor);
+                    }
                     'w' => {
                         self.save_buffer();
-                    },
-                    // 'p' => {
-                    //     res = Err(EditorError::ToggleDebug);
-                    // },
+                        return ControlCommand::Redraw(RedrawItem::StatusLine);
+                    }
+                    'z' => {
+                        buffer.go(TextObject::Word, Direction::Left);
+                        return ControlCommand::Redraw(RedrawItem::Cursor);
+                    }
+                    'x' => {
+                        buffer.go(TextObject::Word, Direction::Right);
+                        return ControlCommand::Redraw(RedrawItem::Cursor);
+                    }
                     'y' => {
                         self.buffers.remove(&view.buffer_id);
                         self.buffers.insert(view.buffer_id, Buffer::new(None));
                     }
                     _ => {
-                        // todo!("Ctrl modifier not implemented")
+                        todo!("Ctrl modifier not implemented")
                     }
                 }
-            },
+            }
             _ => {
                 // todo!("key not handled key: {:?}", key);
             }
         }
-        return res;
+        return ControlCommand::Noop;
     }
-}
-
-
-pub enum EditorError {
-    ToggleDebug,
-    Quit
 }
