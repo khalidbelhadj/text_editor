@@ -2,14 +2,9 @@
 A simple text editor written in rust.
 
 ## To do
-- [ ] Implement move_to_eol and move_to_bol
-- [ ] Implement save functionality
-- [ ] Implement close file
-- [x] Create an Editor struct
-- [ ] Handle key bindings
-- [ ] Render view on Surface
-- [ ] Use layers to render editor
-- [ ] Command/echo area
+- [ ] Figure out how to get input from mini buffer
+- [ ] Display file contents at different scroll positions
+- [ ] Implement get_object_offset
 
 ## Requirements
 - [x] Opening local files
@@ -27,3 +22,5 @@ A simple text editor written in rust.
 - [ ] Tree sitter syntax highlighting
 - [ ] Basic LSP support
 - [ ] Nerd font support
+
+

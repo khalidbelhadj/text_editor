@@ -1,0 +1,22 @@
+*path*: Some("Cargo.toml"),
+**data_len: 242,
+*gap_start*: 0,
+*gap_len*: 0,
+*cursor_offset*: 0,
+*modified*: false,
+*line_offsets*: [9, 30, 48, 65, 66, 163, 164, 179, 197, 198, 206, 220, 241],
+*data*:
+[package]
+name = "text_editor"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+termion = "2.0.1"
+
+[[bin]]
+name = "edit"
+path = "src/main.rs"
+,

@@ -1,9 +1,9 @@
 mod buffer;
-mod view;
-mod editor;
-mod renderer;
 mod controller;
+mod editor;
 mod keymap;
+mod renderer;
+mod view;
 
 fn main() {
     controller::run();
