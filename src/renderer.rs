@@ -4,7 +4,7 @@ pub mod debug_terminal_renderer;
 use crate::editor::Editor;
 
 pub trait Renderer {
-    fn new() -> Self;
+    fn new() -> Self where Self: Sized;
     fn render(&mut self, editor: &Editor);
     fn render_cursor(&mut self, editor: &Editor);
     fn render_status_line(&mut self, editor: &Editor);

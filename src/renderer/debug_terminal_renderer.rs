@@ -17,7 +17,7 @@ pub struct DebugTerminalRenderer {
 impl Renderer for DebugTerminalRenderer {
     fn new() -> Self {
         DebugTerminalRenderer {
-            stdout: stdout().into_raw_mode().unwrap(),
+            stdout: stdout().into_raw_mode().unwrap()
         }
     }
 
@@ -97,7 +97,6 @@ impl Renderer for DebugTerminalRenderer {
     }
 
     fn clear_minibuffer(&mut self, editor: &Editor) {
-
     }
 }
 

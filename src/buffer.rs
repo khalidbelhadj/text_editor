@@ -69,13 +69,6 @@ impl Buffer {
         buffer
     }
 
-    pub fn get_path_as_string(&self) -> &str {
-        match &self.path {
-            Some(p) => p.to_str().unwrap(),
-            None => "",
-        }
-    }
-
     pub fn clear(&mut self) {
         self.data = vec![DEFAULT_CHAR; INIT_LEN].into_boxed_slice();
         self.gap_start = 0;

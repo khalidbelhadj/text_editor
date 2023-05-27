@@ -3,7 +3,8 @@ mod controller;
 mod editor;
 mod keymap;
 mod renderer;
+mod cli;
 
-fn main() {
+pub fn main() {
     controller::run();
 }

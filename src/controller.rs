@@ -1,19 +1,20 @@
 use std::{
-    env::args,
-    fmt::Debug,
-    io::{stdin, stdout, Stdin, Write},
+    io::{stdin, stdout, Write},
     path::PathBuf,
-    str::FromStr, process::exit,
+    process::exit,
+    str::FromStr,
 };
 
+use clap::Parser;
 use termion::{event::Key, input::TermRead};
 
 use crate::{
-    buffer::{Direction, TextObject, Buffer},
+    buffer::{Buffer, Direction, TextObject},
+    cli::CLIArgs,
     editor::Editor,
     renderer::{
         debug_terminal_renderer::DebugTerminalRenderer, terminal_renderer::TerminalRenderer,
-        Renderer, self,
+        Renderer,
     },
 };
 
@@ -23,18 +24,22 @@ pub enum EditorState {
     PromptResponse,
 }
 
-// (path, debug)
-type CLIArgs = (Option<PathBuf>, bool);
-
 pub fn run() {
-    let (path, debug) = get_cli_args();
+    let args = CLIArgs::parse();
+
+    let debug = args.debug;
+    let path = args
+        .path
+        .map(|path| PathBuf::from_str(path.as_str()).unwrap());
+
+    let mut renderer: Box<dyn Renderer> = if debug {
+        Box::new(DebugTerminalRenderer::new())
+    } else {
+        Box::new(TerminalRenderer::new())
+    };
 
     let mut editor = Editor::new();
     editor.open_file(path);
-
-    // TODO: change this if debug is true
-    let mut renderer = TerminalRenderer::new();
-    // let mut renderer = DebugTerminalRenderer::new();
 
     renderer.render(&editor);
     stdout().flush().unwrap();
@@ -43,42 +48,24 @@ pub fn run() {
     loop {
         let key = it.next().unwrap().unwrap();
         handle_key(&mut editor, &mut renderer, key);
-        stdout().flush().unwrap();
     }
 }
 
-pub fn handle_key<T: Renderer>(editor: &mut Editor, renderer: &mut T, key: Key) {
+pub fn handle_key(editor: &mut Editor, renderer: &mut Box<dyn Renderer>, key: Key) {
     let buffer: &mut Buffer;
     let state = editor.get_state();
 
     match state {
-        EditorState::Editing => {
-            buffer = editor.get_focused_buffer_mut()
-        }
+        EditorState::Editing => buffer = editor.get_focused_buffer_mut(),
         EditorState::PromptResponse => {
             buffer = editor.get_minibuffer();
         }
     }
 
-
     match key {
         Key::Char(c) => {
-            match state {
-                EditorState::Editing => {
-                    buffer.insert(c);
-                    renderer.render(&editor);
-                }
-                EditorState::PromptResponse => {
-                    match c {
-                        '\n' => {
-                            editor.state = EditorState::Editing;
-                        }
-                        _ => {
-                            buffer.insert(c);
-                        }
-                    }
-                }
-            }
+            buffer.insert(c);
+            renderer.render(&editor);
         }
         Key::Left => {
             buffer.go(TextObject::Char, Direction::Left);
@@ -99,7 +86,7 @@ pub fn handle_key<T: Renderer>(editor: &mut Editor, renderer: &mut T, key: Key) 
                 buffer.delete(TextObject::Char, Direction::Right);
                 renderer.render(&editor);
             }
-           'b' => {
+            'b' => {
                 buffer.go(TextObject::Char, Direction::Left);
                 renderer.render_status_line(&editor);
                 renderer.render_cursor(&editor);
@@ -130,15 +117,22 @@ pub fn handle_key<T: Renderer>(editor: &mut Editor, renderer: &mut T, key: Key) 
                 renderer.render_cursor(&editor);
             }
             's' => {
-                if buffer.path.is_none() {
-                    editor.state = EditorState::PromptResponse;
-                    let new_path = prompt(editor, renderer, "Enter a file name");
-                    editor.save_buffer(Some(new_path));
-                } else {
-                    editor.save_buffer(None);
-                    renderer.render_status_line(&editor);
-                    renderer.render_cursor(&editor);
+                match buffer.path {
+                    Some(_) => editor.save_buffer(None),
+                    None => {
+                        editor.state = EditorState::PromptResponse;
+                        match prompt(editor, renderer, "Enter a file name") {
+                            Some(new_path) => {
+                                editor.save_buffer(Some(new_path));
+                            }
+                            None => {
+                                editor.state = EditorState::Editing;
+                            }
+                        }
+                    }
                 }
+                renderer.render_status_line(&editor);
+                renderer.render_cursor(&editor);
             }
             'c' => {
                 exit(0);
@@ -170,7 +164,7 @@ pub fn handle_key<T: Renderer>(editor: &mut Editor, renderer: &mut T, key: Key) 
     }
 }
 
-fn prompt<T: Renderer>(editor: &mut Editor, renderer: &mut T, message: &str) -> String {
+fn prompt(editor: &mut Editor, renderer: &mut Box<dyn Renderer>, message: &str) -> Option<String> {
     // TODO: Make this optional so that user can cancel operation
     // TODO: add extra key bindings here instead like \n and C-g
     assert!(matches!(editor.state, EditorState::PromptResponse));
@@ -179,44 +173,32 @@ fn prompt<T: Renderer>(editor: &mut Editor, renderer: &mut T, message: &str) -> 
     loop {
         renderer.render_minibuffer_prompt(editor, message);
         let key = it.next().unwrap().unwrap();
-        handle_key(editor, renderer, key);
-        if matches!(editor.state, EditorState::Editing) { break; }
+        match key {
+            Key::Char(c) => match c {
+                '\n' => {
+                    editor.state = EditorState::Editing;
+                    break;
+                }
+                _ => editor.minibuffer.insert(c),
+            },
+            Key::Ctrl(c) => {
+                match c {
+                    's' => {
+                        // Don't allow saves in minibuffer
+                    }
+                    'g' => {
+                        renderer.clear_minibuffer(&editor);
+                        return None;
+                    }
+                    _ => handle_key(editor, renderer, key),
+                }
+            }
+            _ => handle_key(editor, renderer, key),
+        }
     }
 
     let response = editor.minibuffer.text().iter().collect::<String>();
     editor.minibuffer.clear();
     renderer.clear_minibuffer(&editor);
-    renderer.render_cursor(&editor);
-    renderer.render_status_line(&editor);
-    response
-}
-
-fn get_cli_args() -> CLIArgs {
-    let argv: Vec<String> = args().into_iter().collect();
-
-    let mut debug: bool = false;
-    let mut path = None;
-
-    if argv.len() == 0 {
-        panic!("Why is argv 0??");
-    }
-    if argv.len() == 1 {}
-
-    if argv.len() == 2 {
-        if argv[1] == "debug".to_string() {
-            debug = true;
-        } else {
-            path = Some(PathBuf::from_str(argv[1].as_str()).unwrap());
-        }
-    }
-    if argv.len() == 3 {
-        if argv[1] == "debug".to_string() {
-            debug = true;
-        } else {
-            panic!("Something went wrong");
-        }
-        path = Some(PathBuf::from_str(argv[2].as_str()).unwrap());
-    }
-
-    (path, debug)
+    Some(response)
 }
