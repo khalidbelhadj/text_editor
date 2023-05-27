@@ -1,54 +1,44 @@
 use std::{
-    env::args,
-    io::{stdin, stdout, Write, Stdin},
+    io::{stdin, stdout, Write},
     path::PathBuf,
+    process::exit,
     str::FromStr,
 };
 
-use termion::{input::TermRead, event::Key};
+use clap::Parser;
+use termion::{event::Key, input::TermRead};
 
 use crate::{
+    buffer::{Buffer, Direction, TextObject},
+    cli::CLIArgs,
     editor::Editor,
-    renderer::{Renderer, TerminalRenderer}, buffer::{TextObject, Direction},
+    renderer::{
+        debug_terminal_renderer::DebugTerminalRenderer, terminal_renderer::TerminalRenderer,
+        Renderer,
+    },
 };
 
-pub enum EditorCommand {
-    ToggleDebug,
-    Quit,
-}
-
-pub enum Redraw {
-    All,
-    Cursor,
-    FocusedView,
-    StatusLine,
-    CurrentLine,
-    BeforeCursor,
-    AfterCursor,
-}
-
-pub enum ControlCommand {
-    Redraw(Redraw),
-    Editor(EditorCommand),
-    Noop,
-}
-
+#[derive(Clone, Copy)]
 pub enum EditorState {
-    Insert,
+    Editing,
+    PromptResponse,
 }
-
-
-// (path, debug)
-type CLIArgs = (Option<PathBuf>, bool);
 
 pub fn run() {
-    let (path, debug) = get_cli_args();
+    let args = CLIArgs::parse();
 
-    // let stdin = termion::async_stdin();
+    let debug = args.debug;
+    let path = args
+        .path
+        .map(|path| PathBuf::from_str(path.as_str()).unwrap());
+
+    let mut renderer: Box<dyn Renderer> = if debug {
+        Box::new(DebugTerminalRenderer::new())
+    } else {
+        Box::new(TerminalRenderer::new())
+    };
 
     let mut editor = Editor::new();
-    let mut renderer = TerminalRenderer::new();
-    renderer.debug = debug;
     editor.open_file(path);
 
     renderer.render(&editor);
@@ -56,195 +46,159 @@ pub fn run() {
     let mut it = stdin().keys();
 
     loop {
-        // match &editor.state {
-        //     EditorState::Insert => {
-
-        //     }
-        //     EditorState::Prompt(message) => {
-
-        //     }
-        // }
-        let res = it.next().expect("Something went wrong");
-        let key = res.expect("Not sure what happened but stdin was invalid for some reason");
-
-        match handle_key(&mut editor, key) {
-            ControlCommand::Editor(command) => match command {
-                EditorCommand::ToggleDebug => {
-                    renderer.debug = !renderer.debug;
-                }
-                EditorCommand::Quit => {
-                    return;
-                }
-            },
-            ControlCommand::Redraw(command) => match command {
-                Redraw::All => {
-                    renderer.render(&editor);
-                }
-                Redraw::Cursor => {
-                    if debug {
-                        renderer.render(&editor);
-                    } else {
-                    renderer.render_status_line(&editor);
-                    renderer.render_cursor(&editor);
-                    }
-                }
-                Redraw::FocusedView => {
-                    renderer.render(&editor);
-                }
-                Redraw::StatusLine => {
-                    renderer.render_status_line(&editor);
-                }
-                Redraw::CurrentLine => {
-                }
-                Redraw::BeforeCursor => {
-
-                }
-                Redraw::AfterCursor => {
-
-                }
-            },
-            ControlCommand::Noop => {}
-        }
-        stdout().flush().unwrap();
+        let key = it.next().unwrap().unwrap();
+        handle_key(&mut editor, &mut renderer, key);
     }
 }
 
-fn get_cli_args() -> CLIArgs {
-    let argv: Vec<String> = args().into_iter().collect();
+pub fn handle_key(editor: &mut Editor, renderer: &mut Box<dyn Renderer>, key: Key) {
+    let buffer: &mut Buffer;
+    let state = editor.get_state();
 
-    let mut debug: bool = false;
-    let mut path = None;
-
-    if argv.len() == 0 {
-        panic!("Why is argv 0??");
-    }
-    if argv.len() == 1 {}
-
-    if argv.len() == 2 {
-        if argv[1] == "debug".to_string() {
-            debug = true;
-            path = Some(PathBuf::from_str(argv[2].as_str()).unwrap());
-        } else {
-            path = Some(PathBuf::from_str(argv[1].as_str()).unwrap());
+    match state {
+        EditorState::Editing => buffer = editor.get_focused_buffer_mut(),
+        EditorState::PromptResponse => {
+            buffer = editor.get_minibuffer();
         }
     }
-
-    if argv.len() == 3 {
-        if argv[1] == "debug".to_string() {
-            debug = true;
-        } else {
-            panic!("Something went wrong");
-        }
-        path = Some(PathBuf::from_str(argv[2].as_str()).unwrap());
-    }
-
-    (path, debug)
-}
-
-pub fn prompt(message: String) -> String {
-    let mut it = stdin().keys();
-
-    loop {
-        let res = it.next().expect("Something went wrong");
-        let key = res.expect("Not sure what happened but stdin was invalid for some reason");
-        let mut response = String::new();
-        match key {
-            Key::Char(c) => {
-                match c {
-                    '\n' => {
-
-                    }
-                    _ => {
-                        response.push(c)
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-
-// TODO: Not sure if I should be using a Result for this
-// TODO: At least use proper generics inside the Result
-pub fn handle_key(editor: &mut Editor, key: Key) -> ControlCommand {
-    let buffer = editor.get_focused_buffer_mut();
 
     match key {
         Key::Char(c) => {
-            buffer.insert_char(c);
-            return ControlCommand::Redraw(Redraw::FocusedView);
+            buffer.insert(c);
+            renderer.render(&editor);
         }
         Key::Left => {
             buffer.go(TextObject::Char, Direction::Left);
-            return ControlCommand::Redraw(Redraw::Cursor);
+            renderer.render_status_line(&editor);
+            renderer.render_cursor(&editor);
         }
         Key::Right => {
             buffer.go(TextObject::Char, Direction::Right);
-            return ControlCommand::Redraw(Redraw::Cursor);
+            renderer.render_status_line(&editor);
+            renderer.render_cursor(&editor);
         }
         Key::Backspace => {
             buffer.delete(TextObject::Char, Direction::Left);
-            return ControlCommand::Redraw(Redraw::FocusedView);
+            renderer.render(&editor);
         }
         Key::Ctrl(c) => match c {
             'd' => {
                 buffer.delete(TextObject::Char, Direction::Right);
-                return ControlCommand::Redraw(Redraw::FocusedView);
+                renderer.render(&editor);
             }
             'b' => {
                 buffer.go(TextObject::Char, Direction::Left);
-                return ControlCommand::Redraw(Redraw::Cursor);
+                renderer.render_status_line(&editor);
+                renderer.render_cursor(&editor);
             }
             'f' => {
                 buffer.go(TextObject::Char, Direction::Right);
-                return ControlCommand::Redraw(Redraw::Cursor);
+                renderer.render_status_line(&editor);
+                renderer.render_cursor(&editor);
             }
             'n' => {
                 buffer.go(TextObject::Line, Direction::Down);
-                return ControlCommand::Redraw(Redraw::Cursor);
+                renderer.render_status_line(&editor);
+                renderer.render_cursor(&editor);
             }
             'p' => {
                 buffer.go(TextObject::Line, Direction::Up);
-                return ControlCommand::Redraw(Redraw::Cursor);
+                renderer.render_status_line(&editor);
+                renderer.render_cursor(&editor);
             }
             'e' => {
                 buffer.go(TextObject::Line, Direction::Right);
-                return ControlCommand::Redraw(Redraw::Cursor);
+                renderer.render_status_line(&editor);
+                renderer.render_cursor(&editor);
             }
             'a' => {
                 buffer.go(TextObject::Line, Direction::Left);
-                return ControlCommand::Redraw(Redraw::Cursor);
+                renderer.render_status_line(&editor);
+                renderer.render_cursor(&editor);
             }
             's' => {
-                editor.save_buffer();
-                return ControlCommand::Redraw(Redraw::StatusLine);
+                match buffer.path {
+                    Some(_) => editor.save_buffer(None),
+                    None => {
+                        editor.state = EditorState::PromptResponse;
+                        match prompt(editor, renderer, "Enter a file name") {
+                            Some(new_path) => {
+                                editor.save_buffer(Some(new_path));
+                            }
+                            None => {
+                                editor.state = EditorState::Editing;
+                            }
+                        }
+                    }
+                }
+                renderer.render_status_line(&editor);
+                renderer.render_cursor(&editor);
             }
-            'c' => return ControlCommand::Editor(EditorCommand::Quit),
+            'c' => {
+                exit(0);
+            }
             _ => {
                 todo!("Ctrl-{} not implemented", c);
             }
-        }
+        },
         Key::Alt(c) => match c {
             'f' => {
                 buffer.go(TextObject::Word, Direction::Right);
-                return ControlCommand::Redraw(Redraw::Cursor);
+                renderer.render_cursor(&editor);
             }
             'b' => {
                 buffer.go(TextObject::Word, Direction::Left);
-                return ControlCommand::Redraw(Redraw::Cursor);
+                renderer.render_cursor(&editor);
             }
             'd' => {
                 buffer.delete(TextObject::Word, Direction::Right);
-                return ControlCommand::Redraw(Redraw::Cursor);
+                renderer.render_cursor(&editor);
             }
             _ => {
                 todo!("Meta-{} not implemented", c);
             }
-        }
+        },
         _ => {
             // todo!("key not handled key: {:?}", key);
         }
     }
-    return ControlCommand::Noop;
+}
+
+fn prompt(editor: &mut Editor, renderer: &mut Box<dyn Renderer>, message: &str) -> Option<String> {
+    // TODO: Make this optional so that user can cancel operation
+    // TODO: add extra key bindings here instead like \n and C-g
+    assert!(matches!(editor.state, EditorState::PromptResponse));
+
+    let mut it = stdin().keys();
+    loop {
+        renderer.render_minibuffer_prompt(editor, message);
+        let key = it.next().unwrap().unwrap();
+        match key {
+            Key::Char(c) => match c {
+                '\n' => {
+                    editor.state = EditorState::Editing;
+                    break;
+                }
+                _ => editor.minibuffer.insert(c),
+            },
+            Key::Ctrl(c) => {
+                match c {
+                    's' => {
+                        // Don't allow saves in minibuffer
+                    }
+                    'g' => {
+                        renderer.clear_minibuffer(&editor);
+                        return None;
+                    }
+                    _ => handle_key(editor, renderer, key),
+                }
+            }
+            _ => handle_key(editor, renderer, key),
+        }
+    }
+
+    let response = editor.minibuffer.text().iter().collect::<String>();
+    editor.minibuffer.clear();
+    renderer.clear_minibuffer(&editor);
+    Some(response)
 }
