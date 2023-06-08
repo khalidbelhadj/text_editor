@@ -1,4 +1,4 @@
-use crate::{renderer::Renderer, controller::EditorState, buffer::Buffer};
+use crate::{buffer::Buffer, controller::EditorState, renderer::Renderer};
 use termion::{
     clear, color, cursor,
     raw::{IntoRawMode, RawTerminal},
@@ -6,6 +6,7 @@ use termion::{
 };
 
 use std::{
+    fmt::format,
     io::{stdout, Stdout, Write},
 };
 use termion::screen::{AlternateScreen, IntoAlternateScreen};
@@ -13,19 +14,17 @@ use termion::screen::{AlternateScreen, IntoAlternateScreen};
 use crate::editor::Editor;
 
 pub struct TerminalRenderer {
-    // stdout: AlternateScreen<RawTerminal<Stdout>>
-    stdout: RawTerminal<Stdout>,
+    stdout: AlternateScreen<RawTerminal<Stdout>>, // stdout: RawTerminal<Stdout>,
 }
 
 impl Renderer for TerminalRenderer {
     fn new() -> Self {
         TerminalRenderer {
-            // stdout: stdout()
-            //     .into_raw_mode()
-            //     .unwrap()
-            //     .into_alternate_screen()
-            //     .unwrap()
-            stdout: stdout().into_raw_mode().unwrap()
+            stdout: stdout()
+                .into_raw_mode()
+                .unwrap()
+                .into_alternate_screen()
+                .unwrap(), // stdout: stdout().into_raw_mode().unwrap(),
         }
     }
 
@@ -33,14 +32,8 @@ impl Renderer for TerminalRenderer {
         let buffer = editor.get_focused_buffer();
         let (width, height) = terminal_size().expect("Could not get terminal size");
         let lines = buffer.text_lines();
-        let lines_trimmed = lines.iter().take((height - 2)as usize).collect::<Vec<_>>();
-        let gutter_offset = (buffer.line_count().to_string().len() + 1).max(3) as u16;
-
-        // if lines_trimmed[0].len() == 0 {
-        //     write!(self.stdout, "{}", clear::All).unwrap();
-        //     return;
-        // }
-
+        let lines_trimmed = lines.iter().take((height - 2) as usize).collect::<Vec<_>>();
+        let gutter_offset = buffer.line_count().to_string().len().max(2) as u16 + 1;
 
         write!(self.stdout, "{}", cursor::Hide).unwrap();
 
@@ -51,30 +44,51 @@ impl Renderer for TerminalRenderer {
                 .take(width as usize)
                 .collect::<String>();
 
-
             // Display the line
-            write!(self.stdout, "{}{}", cursor::Goto(gutter_offset + 1, line_number), line).unwrap();
+            write!(
+                self.stdout,
+                "{}{}",
+                cursor::Goto(gutter_offset + 1, line_number),
+                line
+            )
+            .unwrap();
 
-            // Clear everything that wasn't overwritten in the current line
-            write!(self.stdout,"{}{}", cursor::Goto(width.min(line.len() as u16 + gutter_offset + 1) as u16, line_number), clear::UntilNewline).unwrap();
-
-            // Drawing the line number
+            // Clearing everything that was not overwritten
+            write!(
+                self.stdout,
+                "{}{}",
+                cursor::Goto(gutter_offset + 1 + line.len() as u16, line_number),
+                clear::UntilNewline
+            )
+            .unwrap();
 
             // Clearing the gutter
             for i in 1..=gutter_offset {
                 write!(self.stdout, "{} ", cursor::Goto(i as u16, line_number)).unwrap();
             }
 
+            // Drawing the line number
             let number_offset = gutter_offset - (line_number.to_string().len()) as u16;
-
-            write!(self.stdout, "{}{}{}", style::Faint, cursor::Goto(number_offset, line_number), line_number).unwrap();
+            write!(
+                self.stdout,
+                "{}{}{}",
+                style::Faint,
+                cursor::Goto(number_offset, line_number),
+                line_number
+            )
+            .unwrap();
             write!(self.stdout, "{}{}", style::Reset, color::Bg(color::Reset)).unwrap();
-            // write!(self.stdout, "{}", gutter_offset).unwrap();
         }
 
         // Clearing all lines until the status line
         for line in (lines_trimmed.len() + 1) as u16..=(height - 2) {
-            write!(self.stdout, "{}{}", cursor::Goto(1, line), clear::CurrentLine).unwrap();
+            write!(
+                self.stdout,
+                "{}{}",
+                cursor::Goto(1, line),
+                clear::CurrentLine
+            )
+            .unwrap();
         }
 
         self.render_status_line(&editor);
@@ -84,23 +98,25 @@ impl Renderer for TerminalRenderer {
 
     fn render_cursor(&mut self, editor: &Editor) {
         let buffer: &Buffer;
-
         let state = editor.state;
 
         match state {
-            EditorState::Editing => {
-                buffer = editor.get_focused_buffer()
-            }
-            EditorState::PromptResponse => {
-                buffer = &editor.minibuffer;
-            }
+            EditorState::Editing => buffer = editor.get_focused_buffer(),
+            EditorState::PromptResponse => buffer = &editor.minibuffer,
         }
 
         let (line, column) = buffer.cursor_position();
         let gutter_offset = (buffer.line_count().to_string().len() + 1).max(3) as u16;
-        write!(self.stdout, "{}", cursor::Goto(column as u16 + gutter_offset, line as u16)).unwrap();
-        write!(self.stdout, "{}", cursor::Show).unwrap();
-        write!(self.stdout, "{}", cursor::BlinkingBlock).unwrap();
+
+        write!(
+            self.stdout,
+            "{}{}{}",
+            cursor::Goto(column as u16 + gutter_offset, line as u16),
+            cursor::Show,
+            cursor::BlinkingBlock
+        )
+        .unwrap();
+
         self.stdout.flush().unwrap();
     }
 
@@ -110,40 +126,96 @@ impl Renderer for TerminalRenderer {
         let (line, column) = buffer.cursor_position();
         let mut file_name = String::new();
 
-        write!(self.stdout, "{}", cursor::Hide).unwrap();
-        write!(self.stdout, "{}", cursor::Goto(1 as u16, (height - 1) as u16)).unwrap();
-
+        // Generating file name as string
         match &buffer.path {
             Some(p) => file_name.push_str(p.to_str().unwrap()),
             None => file_name.push_str("[No Name]"),
         }
 
-        if buffer.modified { file_name.push_str("[+]"); }
-
-        write!(self.stdout, "{}{} {} | ({}, {}) ", color::Fg(color::Black), color::Bg(color::White), file_name, line, column).unwrap();
-
-        let status_info_len = 9 + file_name.len() + line.to_string().len() + column.to_string().len();
-        for i in status_info_len..width as usize {
-            write!(self.stdout, "{} ", cursor::Goto(i as u16, (height - 1) as u16)).unwrap();
+        if buffer.modified {
+            file_name.push_str("[+]");
         }
 
-        write!(self.stdout, "{}{}", color::Bg(color::Reset), color::Fg(color::Reset)).unwrap();
-        write!(self.stdout, "{}", cursor::Show).unwrap();
+        // Drawing the status info
+        let status_info_left = format!(" {} ", file_name);
+        let status_info_right = format!(" {}:{} ", line, column);
+
+        write!(self.stdout, "{}", cursor::Hide).unwrap();
+        
+        write!(
+            self.stdout,
+            "{}{}{}{}",
+            cursor::Goto(1 as u16, (height - 1) as u16),
+            color::Fg(color::Black),
+            color::Bg(color::White),
+            status_info_left
+        )
+        .unwrap();
+        
+        write!(
+            self.stdout,
+            "{}{}{}{}",
+            cursor::Goto((width as usize - status_info_right.len()) as u16, (height - 1) as u16),
+            color::Fg(color::Black),
+            color::Bg(color::White),
+            status_info_right
+        )
+        .unwrap();
+
+        // Drawing the gap and resetting
+        for i in status_info_left.len()..(width as usize) - status_info_right.len() {
+            write!(
+                self.stdout,
+                "{} ",
+                cursor::Goto(i as u16, (height - 1) as u16)
+            )
+            .unwrap();
+        }
+
+        write!(
+            self.stdout,
+            "{}{}{}",
+            color::Bg(color::Reset),
+            color::Fg(color::Reset),
+            cursor::Show
+        )
+        .unwrap();
+       
         self.stdout.flush().unwrap();
     }
 
     fn render_minibuffer_prompt(&mut self, editor: &Editor, message: &str) {
         let (width, height) = terminal_size().unwrap();
 
-        write!(self.stdout, "{}{}", cursor::Goto(1, height), clear::CurrentLine).unwrap();
-        write!(self.stdout, "{}{}: {}{}", style::Faint, message, style::Reset, editor.minibuffer.text().into_iter().collect::<String>()).unwrap();
+        write!(
+            self.stdout,
+            "{}{}",
+            cursor::Goto(1, height),
+            clear::CurrentLine
+        )
+        .unwrap();
+        write!(
+            self.stdout,
+            "{}{}: {}{}",
+            style::Faint,
+            message,
+            style::Reset,
+            editor.minibuffer.text().into_iter().collect::<String>()
+        )
+        .unwrap();
         self.stdout.flush().unwrap();
     }
 
     fn clear_minibuffer(&mut self, editor: &Editor) {
         let (width, height) = terminal_size().unwrap();
 
-        write!(self.stdout, "{}{}", cursor::Goto(1, height), clear::CurrentLine).unwrap();
+        write!(
+            self.stdout,
+            "{}{}",
+            cursor::Goto(1, height),
+            clear::CurrentLine
+        )
+        .unwrap();
         self.stdout.flush().unwrap();
     }
 }

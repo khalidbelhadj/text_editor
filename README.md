@@ -2,9 +2,11 @@
 A simple text editor written in rust.
 
 ## To do
-- [ ] Figure out how to get input from mini buffer
+- [ ] Re-implement `go`, `delete` and `inser`
+- [ ] Fix debug renderer
 - [ ] Display file contents at different scroll positions
-- [ ] Implement get_object_offset
+- [ ] Implement `get_object_offset` and all the text object actions
+- [ ] Implement a simple file explorer like dired
 
 ## Requirements
 - [x] Opening local files

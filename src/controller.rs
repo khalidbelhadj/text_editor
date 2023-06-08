@@ -2,8 +2,10 @@ use std::{
     io::{stdin, stdout, Write},
     path::PathBuf,
     process::exit,
-    str::FromStr,
+    str::FromStr, fmt::write,
 };
+use log::{debug, error, info, trace, warn};
+use std::time::SystemTime;
 
 use clap::Parser;
 use termion::{event::Key, input::TermRead};
@@ -24,7 +26,25 @@ pub enum EditorState {
     PromptResponse,
 }
 
+fn setup_logger() -> Result<(), fern::InitError> {
+    fern::Dispatch::new()
+        .format(|out, message, record| {
+            out.finish(format_args!(
+                "[{} {}] {}",
+                record.level(),
+                record.target(),
+                message
+            ))
+        })
+        .level(log::LevelFilter::Debug)
+        .chain(fern::log_file("output.log")?)
+        .apply()?;
+    Ok(())
+}
+
 pub fn run() {
+    setup_logger().unwrap();
+
     let args = CLIArgs::parse();
 
     let debug = args.debug;
@@ -42,8 +62,10 @@ pub fn run() {
     editor.open_file(path);
 
     renderer.render(&editor);
-    stdout().flush().unwrap();
+    // write!(stdout(), "{}", termion::clear::All).unwrap(); // HACK: First render must clear the whole screen
+    // stdout().flush().unwrap();
     let mut it = stdin().keys();
+
 
     loop {
         let key = it.next().unwrap().unwrap();
@@ -57,9 +79,7 @@ pub fn handle_key(editor: &mut Editor, renderer: &mut Box<dyn Renderer>, key: Ke
 
     match state {
         EditorState::Editing => buffer = editor.get_focused_buffer_mut(),
-        EditorState::PromptResponse => {
-            buffer = editor.get_minibuffer();
-        }
+        EditorState::PromptResponse => buffer = editor.get_minibuffer()
     }
 
     match key {
@@ -116,6 +136,14 @@ pub fn handle_key(editor: &mut Editor, renderer: &mut Box<dyn Renderer>, key: Ke
                 renderer.render_status_line(&editor);
                 renderer.render_cursor(&editor);
             }
+            'k' => {
+                buffer.delete(TextObject::Line, Direction::Right);
+                renderer.render(&editor);
+            }
+            '\u{7f}' => {
+                buffer.delete(TextObject::Line, Direction::Left);
+                renderer.render(&editor);
+            }
             's' => {
                 match buffer.path {
                     Some(_) => editor.save_buffer(None),
@@ -135,7 +163,7 @@ pub fn handle_key(editor: &mut Editor, renderer: &mut Box<dyn Renderer>, key: Ke
                 renderer.render_cursor(&editor);
             }
             'c' => {
-                exit(0);
+                panic!("not sure how to implement exit")
             }
             _ => {
                 todo!("Ctrl-{} not implemented", c);
@@ -144,23 +172,25 @@ pub fn handle_key(editor: &mut Editor, renderer: &mut Box<dyn Renderer>, key: Ke
         Key::Alt(c) => match c {
             'f' => {
                 buffer.go(TextObject::Word, Direction::Right);
+                renderer.render_status_line(&editor);
                 renderer.render_cursor(&editor);
             }
             'b' => {
                 buffer.go(TextObject::Word, Direction::Left);
+                renderer.render_status_line(&editor);
                 renderer.render_cursor(&editor);
             }
             'd' => {
                 buffer.delete(TextObject::Word, Direction::Right);
-                renderer.render_cursor(&editor);
+                renderer.render(&editor);
             }
-            _ => {
-                todo!("Meta-{} not implemented", c);
+            '\u{7f}' => {
+                buffer.delete(TextObject::Word, Direction::Left);
+                renderer.render(&editor);
             }
+            _ => {}
         },
-        _ => {
-            // todo!("key not handled key: {:?}", key);
-        }
+        _ => {}
     }
 }
 
