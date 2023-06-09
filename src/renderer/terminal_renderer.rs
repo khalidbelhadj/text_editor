@@ -1,4 +1,5 @@
-use crate::{buffer::Buffer, controller::EditorState, renderer::Renderer};
+use crate::{buffer::Buffer, controller::EditorState, renderer::Renderer, editor};
+use log::info;
 use termion::{
     clear, color, cursor,
     raw::{IntoRawMode, RawTerminal},
@@ -7,14 +8,17 @@ use termion::{
 
 use std::{
     fmt::format,
-    io::{stdout, Stdout, Write},
+    io::{stdout, Stdout, Write}, ops::Div,
 };
 use termion::screen::{AlternateScreen, IntoAlternateScreen};
 
 use crate::editor::Editor;
 
+pub const STATUS_BAR_HEIGHT: u16 = 2;
+
 pub struct TerminalRenderer {
     stdout: AlternateScreen<RawTerminal<Stdout>>, // stdout: RawTerminal<Stdout>,
+    window_start: u16
 }
 
 impl Renderer for TerminalRenderer {
@@ -25,14 +29,17 @@ impl Renderer for TerminalRenderer {
                 .unwrap()
                 .into_alternate_screen()
                 .unwrap(), // stdout: stdout().into_raw_mode().unwrap(),
+            window_start: 0
         }
     }
 
     fn render(&mut self, editor: &Editor) {
         let buffer = editor.get_focused_buffer();
         let (width, height) = terminal_size().expect("Could not get terminal size");
+        self.update_window(&editor);
+        
         let lines = buffer.text_lines();
-        let lines_trimmed = lines.iter().take((height - 2) as usize).collect::<Vec<_>>();
+        let lines_trimmed = lines.iter().skip(self.window_start as usize).take((height - 2) as usize).collect::<Vec<_>>();
         let gutter_offset = buffer.line_count().to_string().len().max(2) as u16 + 1;
 
         write!(self.stdout, "{}", cursor::Hide).unwrap();
@@ -68,20 +75,20 @@ impl Renderer for TerminalRenderer {
             }
 
             // Drawing the line number
-            let number_offset = gutter_offset - (line_number.to_string().len()) as u16;
+            let number_offset = gutter_offset - ((line_number + self.window_start).to_string().len()) as u16;
             write!(
                 self.stdout,
                 "{}{}{}",
                 style::Faint,
                 cursor::Goto(number_offset, line_number),
-                line_number
+                line_number + self.window_start
             )
             .unwrap();
             write!(self.stdout, "{}{}", style::Reset, color::Bg(color::Reset)).unwrap();
         }
 
         // Clearing all lines until the status line
-        for line in (lines_trimmed.len() + 1) as u16..=(height - 2) {
+        for line in (lines_trimmed.len() + 1) as u16..=(height - STATUS_BAR_HEIGHT) {
             write!(
                 self.stdout,
                 "{}{}",
@@ -97,6 +104,7 @@ impl Renderer for TerminalRenderer {
     }
 
     fn render_cursor(&mut self, editor: &Editor) {
+        self.update_window(&editor);
         let buffer: &Buffer;
         let state = editor.state;
 
@@ -111,7 +119,7 @@ impl Renderer for TerminalRenderer {
         write!(
             self.stdout,
             "{}{}{}",
-            cursor::Goto(column as u16 + gutter_offset, line as u16),
+            cursor::Goto(column as u16 + gutter_offset, line as u16 - self.window_start),
             cursor::Show,
             cursor::BlinkingBlock
         )
@@ -121,6 +129,7 @@ impl Renderer for TerminalRenderer {
     }
 
     fn render_status_line(&mut self, editor: &Editor) {
+        self.update_window(&editor);
         let buffer = editor.get_focused_buffer();
         let (width, height) = terminal_size().expect("Could not get terminal size");
         let (line, column) = buffer.cursor_position();
@@ -217,5 +226,27 @@ impl Renderer for TerminalRenderer {
         )
         .unwrap();
         self.stdout.flush().unwrap();
+    }
+}
+
+impl TerminalRenderer {
+    fn update_window(&mut self, editor: &Editor) {
+        let old_window_start = self.window_start;
+        let buffer = editor.get_focused_buffer();
+        let (_, height) = terminal_size().expect("Could not get terminal size");
+        let (line, _) = buffer.cursor_position();
+        let window_height = height - STATUS_BAR_HEIGHT;
+        let window_end = self.window_start + window_height;
+
+        if line as u16 <= self.window_start {
+            self.window_start -= window_height.div(2).min(self.window_start);
+        } else if line as u16 > window_end {
+            self.window_start += window_height.div(2).min(buffer.line_count() as u16 - window_end);
+        }
+
+        if old_window_start != self.window_start {
+            info!("window start updated from {} to {}", old_window_start, self.window_start);
+            self.render(editor);
+        }
     }
 }

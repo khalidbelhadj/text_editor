@@ -1,10 +1,4 @@
-use std::{
-    fs::{read, File},
-    io::Write,
-    path::PathBuf,
-};
-
-use log::info;
+use std::{fs::read, path::PathBuf};
 
 const INIT_LEN: usize = 10;
 const DEFAULT_CHAR: char = '\0';
@@ -160,6 +154,7 @@ impl Buffer {
             self.is_aligned(),
             "Gap must be aligned before getting cursor position"
         );
+
         let text = self.text();
         let line = 1 + text
             .iter()
@@ -305,9 +300,6 @@ impl Buffer {
                     '|', '}', '~', '\n',
                 ];
                 let text = self.text();
-                // def |
-                // | fed
-                //
                 match direction {
                     Direction::Left => {
                         let first_char = text
@@ -349,13 +341,6 @@ impl Buffer {
                             .unwrap_or(text.len() - self.cursor_offset)
                             as i32
                             + first_char as i32;
-
-                        info!(
-                            "looking for first char in : {:?}",
-                            text.iter().skip(self.cursor_offset).collect::<Vec<_>>()
-                        );
-                        info!("first_char: {}", first_char);
-                        info!("offset: {}", offset);
                     }
                     _ => {}
                 }
@@ -366,17 +351,19 @@ impl Buffer {
 
                 match direction {
                     Direction::Up => {
-                        if line != 1 {
-                            offset = text_lines
-                                .iter()
-                                .nth(line - 2)
-                                .map(|previous_line| {
-                                    -1 * (column + 1 + previous_line.len()
-                                        - previous_line.len().min(column))
-                                        as i32
-                                })
-                                .unwrap_or(0);
+                        if line == 1 {
+                            return offset;
                         }
+
+                        offset = -1 * text_lines
+                            .iter()
+                            .nth(line - 2)
+                            .map(|previous_line| {
+                                (column + previous_line.len()
+                                    - previous_line.len().min(column - 1))
+                                    as i32
+                            })
+                            .unwrap_or(0);
                     }
                     Direction::Down => {
                         offset = text_lines
@@ -393,7 +380,9 @@ impl Buffer {
                             })
                             .unwrap_or(0);
                     }
-                    Direction::Left => offset = -1 * column as i32 + 1,
+                    Direction::Left => {
+                        offset = -1 * column as i32 + 1;
+                    }
                     Direction::Right => {
                         offset = (text_lines
                             .iter()
