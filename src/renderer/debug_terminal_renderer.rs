@@ -21,7 +21,11 @@ impl Renderer for DebugTerminalRenderer {
         }
     }
 
-    fn render(&mut self, editor: &Editor) {
+    fn render_all(&mut self, editor: &Editor) {
+        self.render_editor(&editor);
+    }
+
+    fn render_editor(&mut self, editor: &Editor) {
         let buffer = editor.get_focused_buffer();
         let (width, height) = terminal_size().expect("Could not get terminal size");
         let lines = buffer.text_lines_raw();
@@ -103,15 +107,19 @@ impl Renderer for DebugTerminalRenderer {
         self.stdout.flush().unwrap();
     }
 
-    fn render_cursor(&mut self, editor: &Editor) {
-        self.render(editor);
+    fn render_line(&mut self, editor: &Editor) {
+        self.render_all(editor);
     }
 
-    fn render_status_line(&mut self, editor: &Editor) {}
+    fn render_cursor(&mut self, editor: &Editor) {
+        self.render_all(editor);
+    }
 
-    fn render_minibuffer_prompt(&mut self, editor: &Editor, message: &str) {}
+    fn render_status_line(&mut self, _: &Editor) {}
 
-    fn clear_minibuffer(&mut self, editor: &Editor) {}
+    fn render_minibuffer_prompt(&mut self, _: &Editor, _: &str) {}
+
+    fn clear_minibuffer(&mut self, _: &Editor) {}
 }
 
 impl DebugTerminalRenderer {
@@ -211,12 +219,5 @@ impl DebugTerminalRenderer {
             color::Fg(color::Reset)
         )
         .unwrap();
-    }
-
-    pub fn draw_cursor(&mut self, line: u16, column: u16) {
-        // Repositioning the cursor
-        write!(self.stdout, "{}", cursor::Goto(column, line)).unwrap();
-        write!(self.stdout, "{}", cursor::Show).unwrap();
-        write!(self.stdout, "{}", cursor::BlinkingBlock).unwrap();
     }
 }

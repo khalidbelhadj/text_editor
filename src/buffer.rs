@@ -1,7 +1,11 @@
 use std::{fs::read, path::PathBuf};
+use log::*;
 
 const INIT_LEN: usize = 10;
 const DEFAULT_CHAR: char = '\0';
+
+pub type Position = (usize, usize);
+pub type Selection = (Position, Position);
 
 #[derive(Clone, Copy)]
 pub enum TextObject {
@@ -26,6 +30,8 @@ pub struct Buffer {
     pub gap_len: usize,
     pub cursor_offset: usize,
     pub modified: bool,
+    pub mark: Option<Position>,
+    pub clipboard: Option<Box<[char]>>,
 }
 
 impl Buffer {
@@ -34,13 +40,15 @@ impl Buffer {
         let mut gap_len = INIT_LEN;
 
         if let Some(file_path) = &path {
-            gap_len = 0;
-            data = read(&file_path)
-                .expect(format!("Unable to read file: {:?}", file_path).as_str())
-                .iter()
-                .map(|&byte| byte as char)
-                .collect::<Vec<_>>()
-                .into_boxed_slice();
+            if file_path.exists() {
+                gap_len = 0;
+                data = read(&file_path)
+                    .expect(format!("Unable to read file: {:?}", file_path).as_str())
+                    .iter()
+                    .map(|&byte| byte as char)
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice();
+            }
         }
 
         Buffer {
@@ -50,6 +58,8 @@ impl Buffer {
             gap_len,
             cursor_offset: 0,
             modified: false,
+            mark: None,
+            clipboard: None,
         }
     }
 
@@ -85,7 +95,6 @@ impl Buffer {
         }
 
         self.cursor_offset = new_cursor_offset as usize;
-
         self.align_gap();
 
         assert!(!self.in_gap(self.cursor_offset), "Cursor in gap");
@@ -122,10 +131,116 @@ impl Buffer {
         self.modified = true;
     }
 
+    pub fn go_to_start(&mut self) {
+        self.cursor_offset = 0;
+        self.align_gap();
+    }
+
+    pub fn go_to_end(&mut self) {
+        self.cursor_offset = self.data.len();
+        self.align_gap();
+    }
+
+    // ---------- Selection ----------
+
+    pub fn toggle_selection(&mut self) {
+        match self.mark {
+            None => self.mark = Some(self.cursor_position()),
+            Some(_) => self.mark = None,
+        }
+    }
+
+    pub fn get_selection(&self) -> Option<Selection> {
+        if let Some(mark) = self.mark {
+            let cursor_position = self.cursor_position();
+            let (mark_line, mark_col) = mark;
+            let (cursor_line, cursor_col) = cursor_position;
+
+            if mark_line == cursor_line {
+                if mark_col >= cursor_col {
+                    return Some((cursor_position, mark));
+
+                } else if mark_col < cursor_col {
+                    return Some((mark, cursor_position));
+                }
+            } else if mark_line > cursor_line {
+                return Some((cursor_position, mark));
+
+            } else if mark_line < cursor_line {
+                return Some((mark, cursor_position));
+            }
+        }
+        None
+    }
+
+    pub fn copy_to_clipboard(&mut self) {
+        if let Some(mark) = self.mark {
+            // TODO: This doesn't need to call text(), optimise later!
+            let text = self.text();
+            let mark_offset = text
+                .iter()
+                .enumerate()
+                .filter(|(i, c)| c == &&'\n' || i == &0)
+                .nth(mark.0 - 1)
+                .unwrap()
+                .0
+                + mark.1
+                - 1;
+            let (a, b) = (mark_offset.min(self.cursor_offset), mark_offset.max(self.cursor_offset));
+
+            let mut new_clipboard = text[a..b].iter().map(|c| c.to_owned()).collect::<Vec<_>>();
+            if !new_clipboard.is_empty() && new_clipboard[0] == '\n' {
+                new_clipboard.remove(0);
+            }
+
+            self.clipboard = Some(new_clipboard.into_boxed_slice());
+            self.toggle_selection();
+        }
+    }
+
+    pub fn paste_from_clipboard(&mut self) {
+        let clipboard = self.clipboard.clone();
+        if let Some(text) = clipboard {
+            for c in text.iter() {
+                self.insert(*c);
+            }
+        }
+    }
+
+    pub fn delete_selection(&mut self) {
+        if let Some(mark) = self.mark {
+            let mark_offset = self
+                .text()
+                .iter()
+                .enumerate()
+                .filter(|(i, c)| c == &&'\n' || i == &0)
+                .nth(mark.0 - 1)
+                .unwrap()
+                .0
+                + mark.1
+                - 1 + (mark.0 != 1) as usize;
+
+            let mut diff = self.cursor_offset as i32 - mark_offset as i32;
+            while diff > 0 {
+                self.delete(TextObject::Char, Direction::Left);
+                diff -= 1;
+            }
+            while diff < 0 {
+                self.delete(TextObject::Char, Direction::Right);
+                diff += 1;
+            }
+            self.toggle_selection();
+        }
+    }
+
     // ---------- Accessing content ----------
 
     pub fn line_count(&self) -> usize {
-        self.data.iter().filter(|c| c == &&'\n').count()
+        self.data
+            .iter()
+            .enumerate()
+            .filter(|(i, c)| c == &&'\n' && !self.in_gap(*i + 1))
+            .count()
     }
 
     pub fn text(&self) -> Box<[char]> {
@@ -148,14 +263,11 @@ impl Buffer {
             .into_boxed_slice()
     }
 
-    pub fn cursor_position(&self) -> (usize, usize) {
-        // TODO: Assumes that the cursor is aligned
-        assert!(
-            self.is_aligned(),
-            "Gap must be aligned before getting cursor position"
-        );
+    pub fn cursor_position(&self) -> Position {
+        assert!(self.is_aligned(), "Gap must be aligned");
 
         let text = self.text();
+
         let line = 1 + text
             .iter()
             .take(self.cursor_offset)
@@ -201,17 +313,13 @@ impl Buffer {
             .into_boxed_slice()
     }
 
-    pub fn cursor_position_raw(&self) -> (usize, usize) {
-        todo!("cursor position raw")
-    }
-
     // ---------- Helper functions ----------
 
     fn is_aligned(&self) -> bool {
         self.gap_start == self.cursor_offset
     }
 
-    fn in_gap(&self, offset: usize) -> bool {
+    pub fn in_gap(&self, offset: usize) -> bool {
         //   012345678
         //  [hell____o]
         //       ^   ^
@@ -316,7 +424,7 @@ impl Buffer {
                             .take(self.cursor_offset - first_char)
                             .rev()
                             .enumerate()
-                            .find(|(i, c)| word_boundaries.contains(c))
+                            .find(|(_, c)| word_boundaries.contains(c))
                             .map(|(i, _)| i)
                             .unwrap_or(self.cursor_offset) as i32
                             + first_char as i32;
@@ -355,15 +463,16 @@ impl Buffer {
                             return offset;
                         }
 
-                        offset = -1 * text_lines
-                            .iter()
-                            .nth(line - 2)
-                            .map(|previous_line| {
-                                (column + previous_line.len()
-                                    - previous_line.len().min(column - 1))
-                                    as i32
-                            })
-                            .unwrap_or(0);
+                        offset = -1
+                            * text_lines
+                                .iter()
+                                .nth(line - 2)
+                                .map(|previous_line| {
+                                    (column + previous_line.len()
+                                        - previous_line.len().min(column - 1))
+                                        as i32
+                                })
+                                .unwrap_or(0);
                     }
                     Direction::Down => {
                         offset = text_lines

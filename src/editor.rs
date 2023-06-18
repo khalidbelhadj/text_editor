@@ -11,7 +11,7 @@ pub type BufferId = usize;
 pub struct Editor {
     buffers: HashMap<BufferId, Buffer>,
     next_buffer_id: BufferId,
-    pub focused: BufferId,
+    focused: BufferId,
     pub minibuffer: Buffer,
     pub state: EditorState,
 }
@@ -35,14 +35,6 @@ impl Editor {
         return self.buffers.get_mut(&self.focused).unwrap();
     }
 
-    pub fn get_minibuffer(&mut self) -> &mut Buffer {
-        &mut self.minibuffer
-    }
-
-    pub fn get_state(&mut self) -> EditorState {
-        self.state
-    }
-
     pub fn open_file(&mut self, path: Option<PathBuf>) {
         self.buffers.insert(self.next_buffer_id, Buffer::new(path));
         self.focused = self.next_buffer_id;
@@ -61,10 +53,18 @@ impl Editor {
 
         match &buffer.path {
             Some(file_path) => {
-                // TODO: Remove unwraps and actually handle the errors
-                let mut f = File::create(file_path).expect(format!("Something messed up with the path {:?}", file_path).as_str());
-                let data = &buffer.text().iter().collect::<String>();
-                f.write_all(data.as_bytes()).expect("Unable to write data");
+                let text = &buffer.text();
+                let mut file = File::create(file_path)
+                    .expect(format!("Something messed up with the path {:?}", file_path).as_str());
+                
+                file.write_all(
+                    text.iter()
+                        .map(|&char| char as u8)
+                        .collect::<Vec<_>>()
+                        .as_slice(),
+                )
+                .expect("Unable to write data");
+
                 buffer.modified = false
             }
             None => {
